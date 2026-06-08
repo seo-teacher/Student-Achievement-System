@@ -1,7 +1,265 @@
-| 변경 | 설명 |
-| --- | --- |
-| ❌ 삭제 | 기존 LOCAL MOCK BACKEND 스크립트 (localStorage 흉내내던 부분) |
-| ✅ 추가 | Firebase v10 compat SDK 로드 + firebaseConfig 초기화 |
-| ✅ 추가 | 우측 하단 "💾 localStorage → Firestore 데이터 이전" 플로팅 버튼 (조건부 표시) |
-| ✅ 유지 | React 컴포넌트 코드 전체 (한 줄도 안 바꿈 — API가 동일하기 때문) |
-| ✅ 실시간 동기화 | onSnapshot()이 그대로 사용되어 여러 기기/탭 자동 반영 |
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>2026학년도 해남동초등학교 명인제 관리 앱</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+
+  <!-- ★★★ Firebase v10 compat SDK ★★★ -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+
+  <style>
+    html, body, #root { font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, sans-serif; }
+    body {
+      background:
+        radial-gradient(at 10% 10%, #fef3f8 0px, transparent 50%),
+        radial-gradient(at 90% 20%, #eef6ff 0px, transparent 50%),
+        radial-gradient(at 50% 90%, #f3f0ff 0px, transparent 50%),
+        #fffafd;
+      min-height: 100vh;
+    }
+    input, select, textarea { font-size: 16px; box-sizing: border-box; }
+    .pop-in { animation: pop 0.25s ease-out; }
+    @keyframes pop { from { transform: scale(0.94); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+    .float { animation: float 3s ease-in-out infinite; }
+    @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+    .diary-paper {
+      background-image: repeating-linear-gradient(180deg, transparent, transparent 27px, #fce7f3 27px, #fce7f3 28px);
+      background-position: 0 8px;
+    }
+    .fb-textarea-intellect:focus   { outline:none; border-color:#0ea5e9; box-shadow:0 0 0 3px rgba(14,165,233,0.18); }
+    .fb-textarea-personality:focus { outline:none; border-color:#ec4899; box-shadow:0 0 0 3px rgba(236,72,153,0.18); }
+    .fb-textarea-emotion:focus     { outline:none; border-color:#f59e0b; box-shadow:0 0 0 3px rgba(245,158,11,0.18); }
+    .stepper-btn { user-select: none; }
+    input[type=number]::-webkit-outer-spin-button,
+    input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+    input[type=number] { -moz-appearance: textfield; }
+    .toggle-switch { position: relative; display: inline-block; width: 48px; height: 26px; }
+    .toggle-switch input { opacity: 0; width: 0; height: 0; }
+    .toggle-slider { position: absolute; cursor: pointer; inset: 0; background: #cbd5e1; border-radius: 26px; transition: 0.2s; }
+    .toggle-slider::before { content: ''; position: absolute; height: 20px; width: 20px; left: 3px; top: 3px; background: white; border-radius: 50%; transition: 0.2s; }
+    .toggle-switch input:checked + .toggle-slider { background: #ec4899; }
+    .toggle-switch input:checked + .toggle-slider::before { transform: translateX(22px); }
+
+    /* ★★★ 마이그레이션 플로팅 버튼 ★★★ */
+    #migration-fab {
+      position: fixed; right: 16px; bottom: 16px; z-index: 9999;
+      background: #fff; border: 2px solid #fbbf24;
+      border-radius: 16px; padding: 12px 14px;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.08);
+      max-width: 320px; font-size: 13px; line-height: 1.4;
+    }
+    #migration-fab button {
+      display:block; width:100%; margin-top:8px;
+      background:#f59e0b; color:#fff; font-weight:700;
+      padding:8px 12px; border-radius:10px; border:0; cursor:pointer;
+    }
+    #migration-fab button:hover { background:#d97706; }
+    #migration-fab button:disabled { background:#cbd5e1; cursor:not-allowed; }
+    #migration-fab .close-x {
+      position:absolute; top:6px; right:8px;
+      background:transparent; border:0; color:#94a3b8; cursor:pointer;
+      font-size:14px; width:auto; margin:0; padding:2px 6px;
+    }
+    #migration-fab .close-x:hover { color:#475569; background:transparent; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <!-- ★★★ 마이그레이션 플로팅 버튼 (조건부 표시) ★★★ -->
+  <div id="migration-fab">
+    <button type="button" class="close-x" onclick="document.getElementById('migration-fab').style.display='none'">✕</button>
+    <div style="font-weight:700; color:#92400e;">📦 이전 localStorage 데이터 발견</div>
+    <div style="color:#475569; margin-top:4px; font-size:12px;">
+      이 기기의 브라우저에 저장돼 있던 학생/일지 데이터를 Firestore로 한 번에 옮길 수 있어요.
+    </div>
+    <button id="migration-btn" type="button">🚀 Firestore로 데이터 이전하기</button>
+    <div id="migration-status" style="margin-top:6px; font-size:11px; color:#64748b;"></div>
+  </div>
+
+  <!-- ★★★ Firebase 초기화 + 마이그레이션 로직 (기존 LOCAL MOCK BACKEND 대체) ★★★ -->
+  <script>
+  (function () {
+    const firebaseConfig = {
+      apiKey: "AIzaSyCsTp3b8c8b7irJ-HArmtN8a8F6ltL0xx4",
+      authDomain: "student-achievement-syst-280f8.firebaseapp.com",
+      projectId: "student-achievement-syst-280f8",
+      storageBucket: "student-achievement-syst-280f8.firebasestorage.app",
+      messagingSenderId: "1042051721581",
+      appId: "1:1042051721581:web:f92e803a637d92d6e59264"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const _db = firebase.firestore();
+
+    // (선택) 오프라인 캐시 활성화 — 다중 탭 지원
+    try {
+      _db.enablePersistence({ synchronizeTabs: true }).catch(()=>{});
+    } catch(e) { /* ignore */ }
+
+    // 기존 React 코드가 사용하는 전역 객체와 호환되도록 노출
+    window.db = _db;
+    window.FieldValue = firebase.firestore.FieldValue;
+    // window.firebase 는 compat SDK가 이미 전역으로 노출
+    console.log('%c[Firestore] 연결됨', 'color:#0ea5e9;font-weight:bold;',
+      firebaseConfig.projectId);
+
+    /* ===== localStorage → Firestore 마이그레이션 ===== */
+    const OLD_KEY = 'myeongin_db_v3';
+    const MIGRATED_FLAG = 'myeongin_migrated_at_v1';
+    const fab = document.getElementById('migration-fab');
+    const btn = document.getElementById('migration-btn');
+    const statusEl = document.getElementById('migration-status');
+
+    const hasOldData = () => {
+      try {
+        const raw = localStorage.getItem(OLD_KEY);
+        if (!raw) return false;
+        const obj = JSON.parse(raw);
+        return obj && typeof obj === 'object' && Object.keys(obj).length > 0;
+      } catch { return false; }
+    };
+    const alreadyMigrated = () => !!localStorage.getItem(MIGRATED_FLAG);
+
+    // 표시 여부 결정
+    if (hasOldData() && !alreadyMigrated()) {
+      fab.style.display = 'block';
+    } else {
+      fab.style.display = 'none';
+    }
+
+    // 옛 저장 구조에 있던 {__t:'ts', iso:'...'} 형태를 Firestore Timestamp 로 복원
+    const Timestamp = firebase.firestore.Timestamp;
+    const revive = (v) => {
+      if (v && typeof v === 'object' && v.__t === 'ts') {
+        return Timestamp.fromDate(new Date(v.iso));
+      }
+      if (Array.isArray(v)) return v.map(revive);
+      if (v && typeof v === 'object') {
+        const o = {};
+        for (const k in v) o[k] = revive(v[k]);
+        return o;
+      }
+      return v;
+    };
+
+    btn.addEventListener('click', async () => {
+      if (!confirm(
+        '이 기기의 localStorage 데이터를 Firestore로 옮길까요?\n\n' +
+        '· 같은 문서 ID가 이미 Firestore에 있으면 덮어쓰여집니다.\n' +
+        '· 학생/일지/설정 전체가 한꺼번에 이전됩니다.\n\n' +
+        '계속하시겠어요?'
+      )) return;
+
+      btn.disabled = true;
+      statusEl.textContent = '⏳ 이전 중…';
+      try {
+        const raw = localStorage.getItem(OLD_KEY);
+        const store = JSON.parse(raw || '{}');
+        let total = 0, perColl = {};
+
+        for (const collName in store) {
+          const coll = store[collName] || {};
+          const ids = Object.keys(coll);
+          perColl[collName] = ids.length;
+
+          // Firestore batch 한도(500)보다 안전하게 400씩 쪼개기
+          for (let i = 0; i < ids.length; i += 400) {
+            const batch = _db.batch();
+            ids.slice(i, i + 400).forEach(id => {
+              const data = revive(coll[id]);
+              batch.set(_db.collection(collName).doc(id), data, { merge: true });
+            });
+            await batch.commit();
+          }
+          total += ids.length;
+        }
+
+        localStorage.setItem(MIGRATED_FLAG, new Date().toISOString());
+        const summary = Object.entries(perColl)
+          .map(([k,v])=>`${k}: ${v}건`).join(' / ') || '(데이터 없음)';
+        statusEl.style.color = '#059669';
+        statusEl.textContent = `✅ 완료 — 총 ${total}건 이전됨 (${summary})`;
+        btn.textContent = '✓ 이전 완료';
+        alert(
+          `✅ Firestore 이전 완료!\n\n총 ${total}건이 옮겨졌어요.\n${summary}\n\n` +
+          '※ 원본 localStorage 데이터는 안전하게 그대로 남아 있어요.\n' +
+          '문제가 없는지 확인 후 직접 지워주세요.'
+        );
+        setTimeout(()=>{ fab.style.display='none'; }, 3000);
+      } catch (err) {
+        console.error(err);
+        statusEl.style.color = '#dc2626';
+        statusEl.textContent = '❌ 실패: ' + (err.message || err);
+        btn.disabled = false;
+        alert('이전 중 오류가 발생했어요.\n\n' + (err.message || err) +
+          '\n\nFirestore 보안 규칙(Rules)이 쓰기를 허용하는지 먼저 확인해 주세요.');
+      }
+    });
+  })();
+  </script>
+
+  <!-- ★★★ 이하 기존 React 앱 코드 (변경 없음 — Firestore compat API가 동일) ★★★ -->
+  <script type="text/babel" data-presets="react">
+const { useState, useEffect, useMemo, useRef } = React;
+const db = window.db;
+const FieldValue = window.FieldValue;
+const Timestamp = window.firebase.firestore.Timestamp;
+
+/* =============== 상수 =============== */
+const CLASS_KEY = 'myclass';
+const STUDENT_ID = n => `s-${String(n).padStart(2,'0')}`;
+const DEFAULT_PIN = '0000';
+const DEFAULT_TEACHER_PW = '0000';
+
+const AREAS = [
+  { key:'intellect',   label:'지성인', emoji:'🧠', desc:'꿈을 키우는 어린이',
+    text:'text-sky-700', bg:'bg-sky-100', soft:'bg-sky-50 border-sky-200 text-sky-700',
+    btn:'bg-sky-400 hover:bg-sky-500', bar:'bg-sky-300', dot:'bg-sky-400',
+    chart:'#0ea5e9', chartSoft:'rgba(14,165,233,0.18)', dash:[],     pointStyle:'circle',  width:3,
+    cardBg:'bg-sky-50/40', cardBorder:'border-sky-200',
+    fbTitle:'text-sky-700', fbAccent:'border-sky-200 bg-white',
+    fbButtonBg:'bg-sky-400 hover:bg-sky-500',
+    quickChip:'bg-sky-100 text-sky-700 hover:bg-sky-200',
+    textareaCls:'fb-textarea-intellect border-sky-200' },
+  { key:'personality', label:'인성인', emoji:'💖', desc:'바른 인성의 어린이',
+    text:'text-pink-700', bg:'bg-pink-100', soft:'bg-pink-50 border-pink-200 text-pink-700',
+    btn:'bg-pink-400 hover:bg-pink-500', bar:'bg-pink-300', dot:'bg-pink-400',
+    chart:'#ec4899', chartSoft:'rgba(236,72,153,0.18)', dash:[8,4],  pointStyle:'triangle',width:2.5,
+    cardBg:'bg-pink-50/40', cardBorder:'border-pink-200',
+    fbTitle:'text-pink-700', fbAccent:'border-pink-200 bg-white',
+    fbButtonBg:'bg-pink-400 hover:bg-pink-500',
+    quickChip:'bg-pink-100 text-pink-700 hover:bg-pink-200',
+    textareaCls:'fb-textarea-personality border-pink-200' },
+  { key:'emotion',     label:'감성인', emoji:'🌈', desc:'감성이 풍부한 어린이',
+    text:'text-amber-700', bg:'bg-amber-100', soft:'bg-amber-50 border-amber-200 text-amber-700',
+    btn:'bg-amber-400 hover:bg-amber-500', bar:'bg-amber-300', dot:'bg-amber-400',
+    chart:'#f59e0b', chartSoft:'rgba(245,158,11,0.18)', dash:[2,3],  pointStyle:'rectRot', width:2.5,
+    cardBg:'bg-amber-50/40', cardBorder:'border-amber-200',
+    fbTitle:'text-amber-700', fbAccent:'border-amber-200 bg-white',
+    fbButtonBg:'bg-amber-500 hover:bg-amber-600',
+    quickChip:'bg-amber-100 text-amber-800 hover:bg-amber-200',
+    textareaCls:'fb-textarea-emotion border-amber-200' },
+];
+
+/* ──────────────────────────────────────────────────────────────
+ * 여기 아래부터 끝까지는 기존 코드 그대로입니다.
+ * (DATA_TYPES, UNIT_OPTIONS, ANIMAL_AVATARS, 유틸 함수,
+ *  App / StudentApp / TeacherApp / 모든 컴포넌트, 차트 함수, style 주입,
+ *  ReactDOM.createRoot 까지 변경 없음)
+ * ────────────────────────────────────────────────────────────── */
+
+/* ↓↓↓ 아래에 기존 코드의 "DATA_TYPES =" 줄부터 ReactDOM.createRoot 줄까지
+       그대로 붙여 넣으세요. (한 글자도 수정할 필요 없음) ↓↓↓ */
+
+  </script>
+</body>
+</html>
